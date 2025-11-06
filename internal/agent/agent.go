@@ -464,6 +464,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		} else if isPermissionErr {
 			currentAssistant.AddFinish(message.FinishReasonPermissionDenied, "User denied permission", "")
 		} else {
+			slog.Error("Agent stream error", "error", err, "error_type", fmt.Sprintf("%T", err))
 			currentAssistant.AddFinish(message.FinishReasonError, "API Error", err.Error())
 		}
 		// Note: we use the parent context here because the genCtx has been

@@ -32,6 +32,7 @@ import (
 	"charm.land/fantasy/providers/azure"
 	"charm.land/fantasy/providers/bedrock"
 	"charm.land/fantasy/providers/google"
+	"charm.land/fantasy/providers/ollamacloud"
 	"charm.land/fantasy/providers/openai"
 	"charm.land/fantasy/providers/openaicompat"
 	"charm.land/fantasy/providers/openrouter"
@@ -258,6 +259,15 @@ func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.
 		parsed, err := openaicompat.ParseOptions(mergedOptions)
 		if err == nil {
 			options[openaicompat.Name] = parsed
+		}
+	case ollamacloud.Name:
+		_, hasThink := mergedOptions["think"]
+		if !hasThink && model.ModelCfg.Think {
+			mergedOptions["think"] = true
+		}
+		parsed, err := ollamacloud.ParseOptions(mergedOptions)
+		if err == nil {
+			options[ollamacloud.Name] = parsed
 		}
 	}
 
@@ -620,6 +630,20 @@ func (c *coordinator) buildGoogleVertexProvider(headers map[string]string, optio
 	return google.New(opts...)
 }
 
+func (c *coordinator) buildOllamaCloudProvider(apiKey string, headers map[string]string) (fantasy.Provider, error) {
+	opts := []ollamacloud.Option{
+		ollamacloud.WithAPIKey(apiKey),
+	}
+	if c.cfg.Options.Debug {
+		httpClient := log.NewHTTPClient()
+		opts = append(opts, ollamacloud.WithHTTPClient(httpClient))
+	}
+	if len(headers) > 0 {
+		opts = append(opts, ollamacloud.WithHeaders(headers))
+	}
+	return ollamacloud.New(opts...)
+}
+
 func (c *coordinator) isAnthropicThinking(model config.SelectedModel) bool {
 	if model.Think {
 		return true
@@ -673,6 +697,8 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		return c.buildGoogleProvider(baseURL, apiKey, headers)
 	case "google-vertex":
 		return c.buildGoogleVertexProvider(headers, providerCfg.ExtraParams)
+	case ollamacloud.Name:
+		return c.buildOllamaCloudProvider(apiKey, headers)
 	case openaicompat.Name:
 		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody)
 	default:
