@@ -303,7 +303,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			currentAssistant.AddToolCall(toolCall)
 			return a.messages.Update(genCtx, *currentAssistant)
 		},
-		OnRetry: func(err *fantasy.APICallError, delay time.Duration) {
+		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
 			// TODO: implement
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
