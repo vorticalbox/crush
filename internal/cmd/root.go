@@ -12,17 +12,18 @@ import (
 	"strconv"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea/v2"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/crush/internal/app"
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/db"
 	"github.com/charmbracelet/crush/internal/event"
+	"github.com/charmbracelet/crush/internal/stringext"
 	termutil "github.com/charmbracelet/crush/internal/term"
 	"github.com/charmbracelet/crush/internal/tui"
 	"github.com/charmbracelet/crush/internal/version"
 	"github.com/charmbracelet/fang"
-	"github.com/charmbracelet/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/charmtone"
@@ -43,6 +44,7 @@ func init() {
 		updateProvidersCmd,
 		logsCmd,
 		schemaCmd,
+		loginCmd,
 	)
 }
 
@@ -274,9 +276,5 @@ func shouldQueryTerminalVersion(env uv.Environ) bool {
 	return (!okTermProg && !okSSHTTY) ||
 		(!strings.Contains(termProg, "Apple") && !okSSHTTY) ||
 		// Terminals that do support XTVERSION.
-		strings.Contains(termType, "ghostty") ||
-		strings.Contains(termType, "wezterm") ||
-		strings.Contains(termType, "alacritty") ||
-		strings.Contains(termType, "kitty") ||
-		strings.Contains(termType, "rio")
+		stringext.ContainsAny(termType, "alacritty", "ghostty", "kitty", "rio", "wezterm")
 }

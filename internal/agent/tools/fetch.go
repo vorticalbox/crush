@@ -16,18 +16,6 @@ import (
 	"github.com/charmbracelet/crush/internal/permission"
 )
 
-type FetchParams struct {
-	URL     string `json:"url" description:"The URL to fetch content from"`
-	Format  string `json:"format" description:"The format to return the content in (text, markdown, or html)"`
-	Timeout int    `json:"timeout,omitempty" description:"Optional timeout in seconds (max 120)"`
-}
-
-type FetchPermissionsParams struct {
-	URL     string `json:"url"`
-	Format  string `json:"format"`
-	Timeout int    `json:"timeout,omitempty"`
-}
-
 const FetchToolName = "fetch"
 
 //go:embed fetch.md
@@ -45,7 +33,7 @@ func NewFetchTool(permissions permission.Service, workingDir string, client *htt
 		}
 	}
 
-	return fantasy.NewAgentTool(
+	return fantasy.NewParallelAgentTool(
 		FetchToolName,
 		string(fetchDescription),
 		func(ctx context.Context, params FetchParams, call fantasy.ToolCall) (fantasy.ToolResponse, error) {

@@ -131,7 +131,20 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 
 	mergedOptions, temp, topP, topK, freqPenalty, presPenalty := mergeCallOptions(model, providerCfg)
 
-	return c.currentAgent.Run(ctx, SessionAgentCall{
+	if providerCfg.OAuthToken != nil && providerCfg.OAuthToken.IsExpired() {
+		slog.Info("Detected expired OAuth token, attempting refresh", "provider", providerCfg.ID)
+		if refreshErr := c.cfg.RefreshOAuthToken(ctx, providerCfg.ID); refreshErr != nil {
+			slog.Error("Failed to refresh OAuth token", "provider", providerCfg.ID, "error", refreshErr)
+			return nil, refreshErr
+		}
+
+		// Rebuild models with refreshed token
+		if updateErr := c.UpdateModels(ctx); updateErr != nil {
+			slog.Error("Failed to update models after token refresh", "error", updateErr)
+			return nil, updateErr
+		}
+	}
+	result, err := c.currentAgent.Run(ctx, SessionAgentCall{
 		SessionID:        sessionID,
 		Prompt:           prompt,
 		Attachments:      attachments,
@@ -143,6 +156,7 @@ func (c *coordinator) Run(ctx context.Context, sessionID string, prompt string, 
 		FrequencyPenalty: freqPenalty,
 		PresencePenalty:  presPenalty,
 	})
+	return result, err
 }
 
 func getProviderOptions(model Model, providerCfg config.ProviderConfig) fantasy.ProviderOptions {
@@ -329,8 +343,26 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		allTools = append(allTools, agentTool)
 	}
 
+	if slices.Contains(agent.AllowedTools, tools.AgenticFetchToolName) {
+		agenticFetchTool, err := c.agenticFetchTool(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		allTools = append(allTools, agenticFetchTool)
+	}
+
+	// Get the model name for the agent
+	modelName := ""
+	if modelCfg, ok := c.cfg.Models[agent.Model]; ok {
+		if model := c.cfg.GetModel(modelCfg.Provider, modelCfg.Model); model != nil {
+			modelName = model.Name
+		}
+	}
+
 	allTools = append(allTools,
-		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Options.Attribution),
+		tools.NewBashTool(c.permissions, c.cfg.WorkingDir(), c.cfg.Options.Attribution, modelName),
+		tools.NewJobOutputTool(),
+		tools.NewJobKillTool(),
 		tools.NewDownloadTool(c.permissions, c.cfg.WorkingDir(), nil),
 		tools.NewEditTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
 		tools.NewMultiEditTool(c.lspClients, c.permissions, c.history, c.cfg.WorkingDir()),
@@ -362,7 +394,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 		}
 		if len(agent.AllowedMCP) == 0 {
 			// No MCPs allowed
-			slog.Warn("MCPs not allowed")
+			slog.Debug("no MCPs allowed", "tool", tool.Name(), "agent", agent.Name)
 			break
 		}
 
@@ -374,6 +406,7 @@ func (c *coordinator) buildTools(ctx context.Context, agent config.Agent) ([]fan
 				filteredTools = append(filteredTools, tool)
 			}
 		}
+		slog.Debug("MCP not allowed", "tool", tool.Name(), "agent", agent.Name)
 	}
 	slices.SortFunc(filteredTools, func(a, b fantasy.AgentTool) int {
 		return strings.Compare(a.Info().Name, b.Info().Name)
@@ -466,27 +499,15 @@ func (c *coordinator) buildAgentModels(ctx context.Context) (Model, Model, error
 }
 
 func (c *coordinator) buildAnthropicProvider(baseURL, apiKey string, headers map[string]string) (fantasy.Provider, error) {
-	hasBearerAuth := false
-	for key := range headers {
-		if strings.ToLower(key) == "authorization" {
-			hasBearerAuth = true
-			break
-		}
-	}
-
-	isBearerToken := strings.HasPrefix(apiKey, "Bearer ")
-
 	var opts []anthropic.Option
-	if apiKey != "" && !hasBearerAuth {
-		if isBearerToken {
-			slog.Debug("API key starts with 'Bearer ', using as Authorization header")
-			headers["Authorization"] = apiKey
-			apiKey = "" // clear apiKey to avoid using X-Api-Key header
-		}
-	}
 
-	if apiKey != "" {
-		// Use standard X-Api-Key header
+	if strings.HasPrefix(apiKey, "Bearer ") {
+		// NOTE: Prevent the SDK from picking up the API key from env.
+		os.Setenv("ANTHROPIC_API_KEY", "")
+
+		headers["Authorization"] = apiKey
+	} else if apiKey != "" {
+		// X-Api-Key header
 		opts = append(opts, anthropic.WithAPIKey(apiKey))
 	}
 
@@ -678,7 +699,6 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 		}
 	}
 
-	// TODO: make sure we have
 	apiKey, _ := c.cfg.Resolve(providerCfg.APIKey)
 	baseURL, _ := c.cfg.Resolve(providerCfg.BaseURL)
 
@@ -700,6 +720,12 @@ func (c *coordinator) buildProvider(providerCfg config.ProviderConfig, model con
 	case ollamacloud.Name:
 		return c.buildOllamaCloudProvider(apiKey, headers)
 	case openaicompat.Name:
+		if providerCfg.ID == string(catwalk.InferenceProviderZAI) {
+			if providerCfg.ExtraBody == nil {
+				providerCfg.ExtraBody = map[string]any{}
+			}
+			providerCfg.ExtraBody["tool_stream"] = true
+		}
 		return c.buildOpenaiCompatProvider(baseURL, apiKey, headers, providerCfg.ExtraBody)
 	default:
 		return nil, fmt.Errorf("provider type not supported: %q", providerCfg.Type)
